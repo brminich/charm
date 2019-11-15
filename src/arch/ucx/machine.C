@@ -44,7 +44,7 @@
 #define UCX_MSG_TAG_MASK                UCS_MASK(UCX_TAG_MSG_BITS)
 #define UCX_RMA_TAG_MASK                (UCS_MASK(UCX_TAG_RMA_BITS) << UCX_TAG_MSG_BITS)
 
-#define UCX_LOG_PRIO 50 // Disabled by default
+#define UCX_LOG_PRIO 5 // Disabled by default
 
 enum {
     UCX_SEND_OP,    // Regular Send using UcxSendMsg
@@ -228,6 +228,8 @@ static inline UcxRequest* UcxPostRxReq(ucp_tag_t tag, size_t size,
     void *buf = CmiAlloc(size);
     UcxRequest *req;
 
+    CmiEnforce(buf != NULL);
+
     if (tag == UCX_MSG_TAG_EAGER) {
         req = (UcxRequest*)ucp_tag_recv_nb(ucxCtx.worker, buf,
                                            ucxCtx.eagerSize,
@@ -242,8 +244,8 @@ static inline UcxRequest* UcxPostRxReq(ucp_tag_t tag, size_t size,
     }
 
     CmiEnforce(!UCS_PTR_IS_ERR(req));
-    UCX_LOG(3, "Posted RX buf %p size %zu, req %p, tag %zu, comp %d\n",
-            req->msgBuf, size, req, tag, req->completed);
+    UCX_LOG(5, "Posted RX buf %p size %zu, req %p, tag %zu, comp %d\n",
+            buf, size, req, tag, req->completed);
 
     // Request completed immediately
     if (req->completed) {
@@ -260,7 +262,7 @@ static void UcxInitEps(int numNodes, int myId)
     ucp_address_t *address;
     ucs_status_t status;
     ucp_ep_params_t eParams;
-    size_t addrlen, maxval, len, partLen;
+    size_t addrlen = 0, maxval = 0, len, partLen;
     ucp_ep_h ep;
     int i, j, ret, peer, maxkey, parts;
     char *keys, *addrp, *remoteAddr;
@@ -290,6 +292,9 @@ static void UcxInitEps(int numNodes, int myId)
     UCX_CHECK_RET(ret, "UcxInitEps: snprintf error", (ret <= 0));
     ret = runtime_kvs_put(keys, &parts, sizeof(parts));
     UCX_CHECK_PMI_RET(ret, "UcxInitEps: runtime_kvs_put error");
+ 
+    UCX_LOG(5, "Init eps put %d,  addrlen %ld, parts %d, maxval %ld, maxkey %d",
+            peer,  addrlen, parts, maxval, maxkey);
 
     addrp = (char*)address;
     len   = addrlen;
@@ -339,7 +344,8 @@ static void UcxInitEps(int numNodes, int myId)
 
         status = ucp_ep_create(ucxCtx.worker, &eParams, &ucxCtx.eps[peer]);
         UCX_CHECK_STATUS(status, "ucp_ep_create failed");
-        UCX_LOG(4, "Connecting to %d (ep %p)", peer, ucxCtx.eps[peer]);
+        UCX_LOG(5, "Connecting to %d (ep %p), parts %d",
+                peer, ucxCtx.eps[peer], parts);
         CmiFree(remoteAddr);
     }
 
@@ -349,6 +355,7 @@ static void UcxInitEps(int numNodes, int myId)
 // Should be called for every node (not PE)
 void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
 {
+    static int init = 0;
     ucp_params_t cParams;
     ucp_config_t *config;
     ucp_worker_params_t wParams;
@@ -406,6 +413,9 @@ void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
             CmiAbort(__func__);
         }
     }
+
+    UCX_LOG(5, "%d: Before init eps: rx_reqs %d, rndv thresh %d, batch %d\n",
+            init++, ucxCtx.numRxReqs, ucxCtx.eagerSize, ucxCtx.rxReqsBatch);
 
     UcxInitEps(*numNodes, *myNodeID);
 
